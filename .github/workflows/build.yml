@@ -1,0 +1,65 @@
+name: Build Biblioteca de Casais APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências do sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            zip \
+            unzip \
+            openjdk-17-jdk \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libffi-dev \
+            libssl-dev
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Instalar Cython
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "Cython==0.29.34"
+
+      - name: Instalar Buildozer
+        run: |
+          python -m pip install buildozer
+
+      - name: Preparar python-for-android
+        run: |
+          git clone --depth 1 --branch develop https://github.com/kivy/python-for-android.git /home/runner/p4a
+
+      - name: Compilar APK
+        run: |
+          buildozer android debug
+
+      - name: Enviar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: biblioteca-casais-apk
+          path: bin/*.apk
