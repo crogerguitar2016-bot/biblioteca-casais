@@ -7,6 +7,9 @@ package.domain = com.croger
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,pdf,htm,html,doc,docx,ppt,pptx,txt,epub
 
+android.add_resources = android_res/xml
+android.add_src = android_src
+
 version = 1.0.0
 
 requirements = python3,kivy,pyjnius,android
