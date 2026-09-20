@@ -1,213 +1,597 @@
-import os
-import subprocess
-
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.scrollview import ScrollView
+from kivy.metrics import dp
+from kivy.clock import Clock
 
-
-# Pastas que não devem ser percorridas
-PASTAS_IGNORADAS = {
-    "/storage/emulated/0/Android/data",
-    "/storage/emulated/0/Android/obb",
-}
-
-
-# Termos relacionados a casamento e vida conjugal
-TERMOS = [
-    "casal",
-    "casais",
-    "casamento",
-    "casamentos",
-    "matrimonio",
-    "matrimônio",
-    "conjugal",
-    "conjuge",
-    "cônjuge",
-    "relacionamento",
-    "relacionamentos",
-    "marido",
-    "esposa",
-    "esposo",
-    "namoro",
-    "namorados",
-    "noivo",
-    "noiva",
-    "noivos",
-    "fidelidade",
-    "aconselhamento",
-]
+import os
+import shutil
+import subprocess
+import urllib.parse
 
 
 EXTENSOES = {
     ".pdf",
     ".doc",
     ".docx",
-    ".txt",
-    ".html",
     ".htm",
+    ".html",
     ".ppt",
     ".pptx",
+    ".txt",
+    ".epub",
 }
 
 
-def arquivo_relevante(nome):
-    nome_minusculo = nome.lower()
-    return any(termo in nome_minusculo for termo in TERMOS)
+def nome_legivel(nome):
+    base, extensao = os.path.splitext(nome)
+
+    base = base.replace("_", " ")
+    base = base.replace("-", " - ")
+    base = " ".join(base.split())
+
+    return base
 
 
-def abrir_arquivo(caminho):
-    """
-    Tenta abrir o documento usando o aplicativo Android associado.
-    """
+def abrir_documento(caminho):
     try:
-        subprocess.Popen([
-            "am",
-            "start",
-            "-a",
-            "android.intent.action.VIEW",
-            "-d",
-            "file://" + caminho,
-        ])
+        app = App.get_running_app()
+
+        pasta_cache = os.path.join(
+            app.user_data_dir,
+            "documents"
+        )
+
+        os.makedirs(
+            pasta_cache,
+            exist_ok=True
+        )
+
+        destino = os.path.join(
+            pasta_cache,
+            os.path.basename(caminho)
+        )
+
+        shutil.copy2(
+            caminho,
+            destino
+        )
+
+        extensao = os.path.splitext(
+            destino
+        )[1].lower()
+
+        tipos = {
+            ".pdf": "application/pdf",
+            ".doc": "application/msword",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".ppt": "application/vnd.ms-powerpoint",
+            ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".htm": "text/html",
+            ".html": "text/html",
+            ".txt": "text/plain",
+            ".epub": "application/epub+zip",
+        }
+
+        mime = tipos.get(
+            extensao,
+            "*/*"
+        )
+
+        try:
+            from jnius import autoclass
+
+            PythonActivity = autoclass(
+                "org.kivy.android.PythonActivity"
+            )
+
+            Intent = autoclass(
+                "android.content.Intent"
+            )
+
+            File = autoclass(
+                "java.io.File"
+            )
+
+            FileProvider = autoclass(
+                "androidx.core.content.FileProvider"
+            )
+
+            activity = PythonActivity.mActivity
+
+            arquivo_java = File(
+                destino
+            )
+
+            uri = FileProvider.getUriForFile(
+                activity,
+                activity.getPackageName()
+                + ".fileprovider",
+                arquivo_java
+            )
+
+            intent = Intent(
+                Intent.ACTION_VIEW
+            )
+
+            intent.setDataAndType(
+                uri,
+                mime
+            )
+
+            intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+
+            intent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK
+            )
+
+            activity.startActivity(
+                intent
+            )
+
+            return
+
+        except Exception as erro_android:
+            print(
+                "Erro FileProvider:",
+                erro_android
+            )
+
+            subprocess.Popen(
+                [
+                    "am",
+                    "start",
+                    "-a",
+                    "android.intent.action.VIEW",
+                    "-d",
+                    "file://"
+                    + urllib.parse.quote(
+                        destino
+                    ),
+                ]
+            )
+
     except Exception as erro:
-        print("Erro ao abrir:", erro)
+        print(
+            "Erro ao abrir documento:",
+            erro
+        )
 
 
 class BibliotecaCasais(App):
 
     def build(self):
-        self.title = "Biblioteca de Casais"
+
+        self.title = (
+            "Biblioteca de Casais"
+        )
+
+        self.documentos = []
+        self.principais = []
+        self.complementares = []
 
         raiz = BoxLayout(
             orientation="vertical",
-            padding=10,
-            spacing=8
+            padding=dp(8),
+            spacing=dp(6),
         )
 
         titulo = Label(
             text="BIBLIOTECA DE CASAIS",
             size_hint_y=None,
-            height=50,
-            font_size=22
+            height=dp(48),
+            font_size="21sp",
+            bold=True,
         )
 
-        raiz.add_widget(titulo)
-
-        self.pesquisa = TextInput(
-            hint_text="Pesquisar documento...",
-            size_hint_y=None,
-            height=48,
-            multiline=False
+        raiz.add_widget(
+            titulo
         )
-
-        raiz.add_widget(self.pesquisa)
-
-        botao_buscar = Button(
-            text="🔎 BUSCAR DOCUMENTOS",
-            size_hint_y=None,
-            height=50
-        )
-
-        botao_buscar.bind(on_press=self.buscar)
-
-        raiz.add_widget(botao_buscar)
 
         self.status = Label(
-            text="Toque em BUSCAR para procurar documentos.",
+            text="Localizando biblioteca interna...",
             size_hint_y=None,
-            height=45
+            height=dp(32),
+            font_size="14sp",
         )
 
-        raiz.add_widget(self.status)
+        raiz.add_widget(
+            self.status
+        )
 
-        scroll = ScrollView()
+        self.pesquisar = TextInput(
+            hint_text="Pesquisar pelo nome do livro...",
+            multiline=False,
+            size_hint_y=None,
+            height=dp(44),
+            font_size="16sp",
+        )
+
+        self.pesquisar.bind(
+            text=self.filtrar
+        )
+
+        raiz.add_widget(
+            self.pesquisar
+        )
+
+        self.scroll = ScrollView(
+            do_scroll_x=False,
+            do_scroll_y=True,
+        )
 
         self.lista = BoxLayout(
             orientation="vertical",
-            spacing=5,
-            size_hint_y=None
+            size_hint_y=None,
+            spacing=dp(5),
+            padding=(0, dp(4)),
         )
 
         self.lista.bind(
-            minimum_height=self.lista.setter("height")
+            minimum_height=
+            self.lista.setter("height")
         )
 
-        scroll.add_widget(self.lista)
+        self.scroll.add_widget(
+            self.lista
+        )
 
-        raiz.add_widget(scroll)
+        raiz.add_widget(
+            self.scroll
+        )
+
+        Clock.schedule_once(
+            self.carregar_biblioteca,
+            0.2
+        )
 
         return raiz
 
-    def buscar(self, *args):
-        self.lista.clear_widgets()
+    def localizar_biblioteca(self):
 
-        termo_pesquisa = self.pesquisa.text.lower().strip()
+        locais = []
 
-        encontrados = []
+        diretorio_codigo = os.path.dirname(
+            os.path.abspath(__file__)
+        )
 
-        base = "/storage/emulated/0"
+        locais.append(
+            os.path.join(
+                diretorio_codigo,
+                "biblioteca"
+            )
+        )
 
-        for raiz, diretorios, arquivos in os.walk(base):
+        locais.append(
+            os.path.join(
+                os.path.dirname(
+                    diretorio_codigo
+                ),
+                "biblioteca"
+            )
+        )
 
-            # Não entrar em Android/data e Android/obb
-            diretorios[:] = [
-                d for d in diretorios
-                if os.path.join(raiz, d) not in PASTAS_IGNORADAS
-            ]
+        for local in locais:
 
-            for nome in arquivos:
+            if os.path.isdir(local):
+                return local
 
-                extensao = os.path.splitext(nome)[1].lower()
+        return None
+
+    def carregar_biblioteca(self, *args):
+
+        self.documentos = []
+        self.principais = []
+        self.complementares = []
+
+        base = self.localizar_biblioteca()
+
+        if not base:
+
+            self.status.text = (
+                "ERRO: biblioteca interna "
+                "não encontrada no APK."
+            )
+
+            self.mostrar_mensagem(
+                "A pasta 'biblioteca' não foi "
+                "encontrada dentro do aplicativo."
+            )
+
+            return
+
+        for diretorio, pastas, arquivos in os.walk(
+            base
+        ):
+
+            for arquivo in arquivos:
+
+                extensao = os.path.splitext(
+                    arquivo
+                )[1].lower()
 
                 if extensao not in EXTENSOES:
                     continue
 
-                if not arquivo_relevante(nome):
-                    continue
+                caminho = os.path.join(
+                    diretorio,
+                    arquivo
+                )
 
-                if termo_pesquisa and termo_pesquisa not in nome.lower():
-                    continue
+                relativo = os.path.relpath(
+                    caminho,
+                    base
+                )
 
-                caminho = os.path.join(raiz, nome)
+                partes = relativo.split(
+                    os.sep
+                )
 
-                encontrados.append(caminho)
+                if (
+                    partes
+                    and partes[0].lower()
+                    == "principais"
+                ):
 
-        encontrados.sort(key=lambda x: x.lower())
+                    categoria = "principal"
 
-        self.status.text = (
-            f"{len(encontrados)} documento(s) encontrado(s)."
+                    self.principais.append(
+                        caminho
+                    )
+
+                elif (
+                    partes
+                    and partes[0].lower()
+                    == "complementares"
+                ):
+
+                    categoria = "complementar"
+
+                    self.complementares.append(
+                        caminho
+                    )
+
+                else:
+
+                    categoria = "outro"
+
+                self.documentos.append(
+                    {
+                        "caminho": caminho,
+                        "nome": nome_legivel(
+                            arquivo
+                        ),
+                        "arquivo": arquivo,
+                        "categoria": categoria,
+                    }
+                )
+
+        self.principais.sort(
+            key=lambda caminho:
+            nome_legivel(
+                os.path.basename(
+                    caminho
+                )
+            ).lower()
         )
 
-        if not encontrados:
+        self.complementares.sort(
+            key=lambda caminho:
+            nome_legivel(
+                os.path.basename(
+                    caminho
+                )
+            ).lower()
+        )
+
+        self.documentos.sort(
+            key=lambda documento:
+            documento["nome"].lower()
+        )
+
+        self.status.text = (
+            "Biblioteca interna: "
+            f"{len(self.documentos)} "
+            "documento(s)"
+        )
+
+        self.mostrar_documentos(
+            self.documentos,
+            mostrar_categorias=True
+        )
+
+    def limpar_lista(self):
+
+        self.lista.clear_widgets()
+
+    def adicionar_titulo_secao(
+        self,
+        texto
+    ):
+
+        titulo = Label(
+            text=texto,
+            size_hint_y=None,
+            height=dp(42),
+            font_size="18sp",
+            bold=True,
+        )
+
+        self.lista.add_widget(
+            titulo
+        )
+
+    def adicionar_documento(
+        self,
+        documento
+    ):
+
+        botao = Button(
+            text=documento["nome"],
+            size_hint_y=None,
+            height=dp(52),
+            font_size="15sp",
+            halign="left",
+            valign="middle",
+        )
+
+        botao.bind(
+            on_press=lambda btn,
+            d=documento:
+            abrir_documento(
+                d["caminho"]
+            )
+        )
+
+        self.lista.add_widget(
+            botao
+        )
+
+    def mostrar_documentos(
+        self,
+        documentos,
+        mostrar_categorias=False
+    ):
+
+        self.limpar_lista()
+
+        if not documentos:
+
             self.lista.add_widget(
                 Label(
-                    text="Nenhum documento encontrado.",
+                    text=(
+                        "Nenhum documento "
+                        "encontrado."
+                    ),
                     size_hint_y=None,
-                    height=50
+                    height=dp(50),
+                    font_size="16sp",
                 )
             )
+
             return
 
-        for caminho in encontrados:
+        if mostrar_categorias:
 
-            nome = os.path.basename(caminho)
+            if self.principais:
 
-            botao = Button(
-                text=nome,
+                self.adicionar_titulo_secao(
+                    "BIBLIOTECA PRINCIPAL "
+                    f"({len(self.principais)})"
+                )
+
+                documentos_principais = [
+                    documento
+                    for documento in self.documentos
+                    if documento["categoria"]
+                    == "principal"
+                ]
+
+                for documento in (
+                    documentos_principais
+                ):
+
+                    self.adicionar_documento(
+                        documento
+                    )
+
+            if self.complementares:
+
+                self.adicionar_titulo_secao(
+                    "MATERIAIS COMPLEMENTARES "
+                    f"({len(self.complementares)})"
+                )
+
+                documentos_complementares = [
+                    documento
+                    for documento in self.documentos
+                    if documento["categoria"]
+                    == "complementar"
+                ]
+
+                for documento in (
+                    documentos_complementares
+                ):
+
+                    self.adicionar_documento(
+                        documento
+                    )
+
+        else:
+
+            for documento in documentos:
+
+                self.adicionar_documento(
+                    documento
+                )
+
+    def filtrar(
+        self,
+        instance,
+        texto
+    ):
+
+        termo = texto.strip().lower()
+
+        if not termo:
+
+            self.status.text = (
+                "Biblioteca interna: "
+                f"{len(self.documentos)} "
+                "documento(s)"
+            )
+
+            self.mostrar_documentos(
+                self.documentos,
+                mostrar_categorias=True
+            )
+
+            return
+
+        encontrados = [
+            documento
+            for documento
+            in self.documentos
+            if (
+                termo
+                in documento["nome"].lower()
+                or termo
+                in documento["arquivo"].lower()
+            )
+        ]
+
+        self.status.text = (
+            f"{len(encontrados)} "
+            "documento(s) encontrado(s)"
+        )
+
+        self.mostrar_documentos(
+            encontrados,
+            mostrar_categorias=False
+        )
+
+    def mostrar_mensagem(
+        self,
+        mensagem
+    ):
+
+        self.lista.clear_widgets()
+
+        self.lista.add_widget(
+            Label(
+                text=mensagem,
                 size_hint_y=None,
-                height=55
+                height=dp(80),
+                font_size="16sp",
             )
-
-            botao.bind(
-                on_press=lambda instance, c=caminho:
-                abrir_arquivo(c)
-            )
-
-            self.lista.add_widget(botao)
+        )
 
 
 if __name__ == "__main__":
+
     BibliotecaCasais().run()
