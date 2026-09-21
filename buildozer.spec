@@ -10,6 +10,10 @@ source.include_exts = py,png,jpg,jpeg,kv,atlas,pdf,htm,html,doc,docx,ppt,pptx,tx
 android.add_resources = android_res/xml
 android.add_src = android_src
 
+android.gradle_dependencies = androidx.core:core:1.13.1
+android.enable_androidx = True
+android.extra_manifest_application_arguments = ./android_provider.xml
+
 version = 1.0.0
 
 requirements = python3,kivy,pyjnius,android
